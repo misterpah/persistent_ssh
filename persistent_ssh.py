@@ -7,8 +7,11 @@ import io
 
 
 class PersistentSSH_paramiko_screen:
-    def __init__(self, persistentID, hostName, username, password):
+    def __init__(self, persistentID, hostName,
+                 username, password="", sshKeyFilePath=""):
         self.hostName = hostName
+        if sshKeyFilePath != "":
+            self.sshKey = sshKeyFilePath
         self.username = username
         self.password = password
         self.screenAvailable = False
@@ -20,11 +23,19 @@ class PersistentSSH_paramiko_screen:
 
         self.client = paramiko.SSHClient()
         self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        self.client.connect(
-            hostname=self.hostName,
-            username=self.username,
-            password=self.password
-        )
+        if self.sshKey != None:
+            k = paramiko.RSAKey.from_private_key_file(self.sshKey)
+            self.client.connect(
+                hostname=self.hostName,
+                username=self.username,
+                pkey=k
+            )
+        else:
+            self.client.connect(
+                hostname=self.hostName,
+                username=self.username,
+                password=self.password
+            )
 
     def startScreen(self):
         if self.screenAvailable == False:
@@ -242,4 +253,3 @@ if __name__ == "__main__":
     if obj.waitCommandComplete(10) == True:
         log = obj.getLog()
         print(log)
-
