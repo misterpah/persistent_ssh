@@ -4,79 +4,86 @@ import platform
 import sys
 import re
 import io
+import re
 
 
 class PersistentSSH_paramiko_screen:
     def __init__(self, persistentID, hostName,
-                 username, password="", sshKeyFilePath=""):
-        self.hostName = hostName
-        if sshKeyFilePath != "":
-            self.sshKey = sshKeyFilePath
-        self.username = username
-        self.password = password
+                 username, password="", sshKeyFilePath="", newScreen=True):
         self.screenAvailable = False
         self.persistentID = persistentID
         self.logFile = self.persistentID + ".log"
+        self.configFile = self.persistentID + ".cfg"
         self.version = 1
-        self.startIndex = ""
-        self.endIndex = ""
+        self.waitCommandCompleteFlag = False
 
         self.client = paramiko.SSHClient()
         self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        if self.sshKey != None:
-            k = paramiko.RSAKey.from_private_key_file(self.sshKey)
+        if sshKeyFilePath != "":
+            k = paramiko.RSAKey.from_private_key_file(sshKeyFilePath)
             self.client.connect(
-                hostname=self.hostName,
-                username=self.username,
+                hostname=hostName,
+                username=username,
                 pkey=k
             )
         else:
             self.client.connect(
-                hostname=self.hostName,
-                username=self.username,
-                password=self.password
+                hostname=hostName,
+                username=username,
+                password=password
             )
+        self.screenAvailable = self.checkScreen()
+        if newScreen == True:
+            self.destroySession()
+
+    def checkScreen(self):
+        ret = False
+        # check if there is already a screen with the same name
+        grepScreen = self.runCommandParamiko(
+            "screen -ls | grep {} ".format(self.persistentID))
+        if len(grepScreen['stdout']) >= 1:
+            ret = True
+            print("screen available: {}".format(self.persistentID))
+        return ret
 
     def startScreen(self):
         if self.screenAvailable == False:
-            # create Logfile
-            configFile = []
-            configFile.append("logfile {}".format(self.logFile))
-            configFile.append("logfile flush 1")
-            configFile.append("log on")
-            config_cmd = "echo '{}' > ~/screen.cfg && echo done".format(
-                "\\n".join(configFile))
-            result = self.runCommandParamiko(config_cmd)
-
-            # check if there is already a screen with the same name
+            print("screen not available")
+            createConfigFile = False
+            # find config file
             grepScreen = self.runCommandParamiko(
-                "screen -ls | grep {} ".format(self.persistentID))
-            createNewScreen = False
-            if len(grepScreen['stdout']) >= 1:
-                print("screen {} exist. using it.".format(
-                    self.persistentID))
-            else:
-                print("screen {} not exist. creating...".format(
-                    self.persistentID))
-                createNewScreen = True
-
-            # create screen if flag is True
-            if createNewScreen == True:
-                result = self.runCommandParamiko(
-                    "screen -L -c ~/screen.cfg -dmS {} ".format(
-                        self.persistentID) +
-                    "&& sleep 1 " +
-                    "&& echo done"
-                )
-                self.runCommand("set prompt='screen$ '")
-                self.clearLog()
+                "ls {} ".format(self.persistentID))
+            if grepScreen['stderr'] is not []:
+                # config file not available
+                createConfigFile = True
+            # create configFile
+            if createConfigFile is True:
+                print("creating config file")
+                configFile = []
+                configFile.append("logfile {}".format(self.logFile))
+                configFile.append("logfile flush 1")
+                configFile.append("log on")
+                sftp = self.client.open_sftp()
+                sftp.putfo(io.StringIO("\n".join(
+                    configFile)), self.configFile)
+                sftp.close()
+            print("create screen")
+            self.runCommandParamiko(
+                "screen -L -c ~/{} -dmS {} ".format(
+                    self.configFile, self.persistentID) +
+                "&& echo done"
+            )
             self.screenAvailable = True
+            self.runCommand("set prompt='screen$ '")
+            self.clearLog()
+            print("screen created.")
 
     def destroySession(self):
         if self.screenAvailable != False:
             self.runCommand("exit")
-            self.runCommandParamiko("rm ~/screen.cfg")
+            self.runCommandParamiko("rm ~/{}".format(self.configFile))
             self.runCommandParamiko("rm ~/{}".format(self.logFile))
+            self.screenAvailable = False
 
     def saveStringAsBashFile(self, bash_string):
         if sys.version_info[0] == 2:
@@ -119,7 +126,7 @@ class PersistentSSH_paramiko_screen:
             screen_cmd = "screen -S {} -p 0 -X stuff {}{}{}{}".format(
                 self.persistentID,
                 doubleQuote,
-                "echo PRMKSCR_START &&"+command+" && echo && echo PRMKSCR_STOP",
+                "echo PRMKSCR_START ;"+command+" ; echo ; echo PRMKSCR_STOP",
                 "`/bin/echo -ne \\\\r`",
                 doubleQuote)
 
@@ -130,13 +137,12 @@ class PersistentSSH_paramiko_screen:
 
     def getLog(self):
         # get log file
-        global log
         result = self.runCommandParamiko("cat {}".format(self.logFile))
         if self.version == 2:
-            if self.startIndex != "" and self.endIndex != "":
-                result['stdout'] = result['stdout'][self.startIndex:self.endIndex]
-                self.startIndex = ""
-                self.endIndex = ""
+            if self.waitCommandCompleteFlag == True:
+                regex = r"PRMKSCR_START([\s\S]*?)PRMKSCR_STOP"
+                stdout = re.findall(regex, "\n".join(result['stdout']))[-1]
+                result['stdout'] = stdout
         return result
 
     def clearLog(self):
@@ -162,34 +168,20 @@ class PersistentSSH_paramiko_screen:
                         ret = True
                         break
             if self.version == 2:
-                # trying to get PRMKSCR_START and PRMKSCR_STOP
-                if len(idleCheck['stdout']) > 0:
-                    startIndex = None
-                    endIndex = None
-                    # search PRMKSCR_START
-                    for x in range(0, len(idleCheck['stdout'])):
-                        if idleCheck['stdout'][x].find("PRMKSCR_START") != -1:
-                            # always ignore the first line
-                            if x != 0:
-                                startIndex = x
-                                break
-                    # search PRMKSCR_STOP
-                    for y in range(0, len(idleCheck['stdout'])):
-                        if idleCheck['stdout'][y].find("PRMKSCR_STOP") != -1:
-                            # always ignore the first line
-                            if y != 0:
-                                endIndex = y
-                                break
-                    print(startIndex, endIndex)
-                    # if both PRMKSCR not None
-                    if ((startIndex != None) and (endIndex != None)):
-                        # we don't want the PRMKSCR_START statement.
-                        # skip by adding 1 to startIndex
-                        self.startIndex = startIndex + 1
-                        self.endIndex = endIndex
-                        loop = False
-                        print("Complete. {} sec".format(i))
+                # trying to get PRMKSCR_START and PRMKSCR_STOP using regex
+                regex = r"PRMKSCR_START([\s\S]*?)PRMKSCR_STOP"
+                result = re.findall(regex, "\n".join(idleCheck['stdout']))
+                print(idleCheck)
+                print(result)
+                if len(result) == 0:
+                    pass
+                else:
+                    if result[-1].find("echo ;") != -1:
+                        pass
+                    else:
+                        print("command completed")
                         ret = True
+                        self.waitCommandCompleteFlag = True
                         break
             if i > max_iteration:
                 loop = False
@@ -234,22 +226,19 @@ class PersistentSSH_paramiko_screen:
 
 
 if __name__ == "__main__":
-    import getpass
-    ipaddress = "1.2.3.4"
-    username = "username"
-    password = getpass.getpass("password: ")
-
     obj = PersistentSSH_paramiko_screen(
-        "screen_name", ipaddress, username, password)
-
+        "persistentID", "your.server.com",
+        "username", "password")
     # using version 2
     obj.version = 2
     # clear log to remove old output
     obj.clearLog()
 
     # run command
-    cmd = "accounts {}".format(username)
+    cmd = "uptime"
     obj.runCommand(cmd)
-    if obj.waitCommandComplete(10) == True:
+    if obj.waitCommandComplete(5) == True:
         log = obj.getLog()
         print(log)
+
+    obj.destroySession()
