@@ -226,9 +226,13 @@ class PersistentSSH_paramiko_screen:
 
 
 if __name__ == "__main__":
+    import getpass
+    ipaddress = "1.2.3.4"
+    username = "username"
+    password = getpass.getpass("password: ")
+
     obj = PersistentSSH_paramiko_screen(
-        "persistentID", "your.server.com",
-        "username", "password")
+        "screen_name", ipaddress, username, password)
     # using version 2
     obj.version = 2
     # clear log to remove old output
