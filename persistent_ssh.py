@@ -59,13 +59,15 @@ class PersistentSSH_paramiko_screen:
             # create configFile
             if createConfigFile is True:
                 print("creating config file")
-                configFile = []
-                configFile.append("logfile {}".format(self.logFile))
-                configFile.append("logfile flush 1")
-                configFile.append("log on")
+                configStr = []
+                configStr.append("logfile {}".format(self.logFile))
+                configStr.append("logfile flush 1")
+                configStr.append("log on")
+                configStr = "\n".join(configStr)
+                if sys.version_info[0] == 2:
+                    configStr = configStr.decode("utf-8")
                 sftp = self.client.open_sftp()
-                sftp.putfo(io.StringIO("\n".join(
-                    configFile)), self.configFile)
+                sftp.putfo(io.StringIO(configStr), self.configFile)
                 sftp.close()
             print("create screen")
             self.runCommandParamiko(
