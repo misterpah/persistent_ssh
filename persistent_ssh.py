@@ -178,7 +178,7 @@ class PersistentSSH_paramiko_screen:
                 if len(result) == 0:
                     pass
                 else:
-                    if result[-1].find("echo ;") != -1:
+                    if result[-1].find("; echo") != -1:
                         pass
                     else:
                         print("command completed")
