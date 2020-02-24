@@ -76,6 +76,13 @@ class PersistentSSH_paramiko_screen:
                 "&& echo done"
             )
             self.screenAvailable = True
+
+            print("get simple screen number")
+            result = self.runCommandParamiko(
+                "screen -ls | grep {}".format(self.persistentID))
+            self.persistentID = result['stdout'][0].split(".")[0].strip()
+            print("simple screen number = {}".format(self.persistentID))
+
             self.runCommand("set prompt='screen$ '")
             self.clearLog()
             print("screen created.")
